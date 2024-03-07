@@ -32,20 +32,37 @@ def start_server():
     records = queue.Queue()
     bucket_name = os.environ["ELB_INGESTOR_BUCKET"]
     bucket = s3_client.Bucket(bucket_name)
-    unprocessed_prefix = os.environ.get("ELB_INGESTOR_SEARCH_PREFIX", "logs/")
-    processing_prefix = os.environ.get("ELB_INGESTOR_WORKING_PREFIX", "logs-working/")
-    processed_prefix = os.environ.get("ELB_INGESTOR_DONE_PREFIX", "logs-done/")
     file_batch_size = int(os.environ.get("ELB_INGESTOR_FILE_BATCH_SIZE", 5))
     index_pattern = os.environ.get("ELB_INDEX_PATTERN", "logs-platform-%Y.%m.%d")
-    fetcher = elb_log_fetcher.S3LogFetcher(
-        bucket,
-        unprocessed_prefix=unprocessed_prefix,
-        processing_prefix=processing_prefix,
-        processed_prefix=processed_prefix,
-        to_do=logs_to_be_processed,
-        done=logs_processed,
-        file_batch_size=file_batch_size
-    )
+    fetch_mode = os.environ["ELB_INGESTOR_FETCH_MODE"]
+    if fetch_mode == "bad_aggressive_fetcher_do_not_use_until_we_fix_backoff":
+        unprocessed_prefix = os.environ.get("ELB_INGESTOR_SEARCH_PREFIX", "logs/")
+        processing_prefix = os.environ.get("ELB_INGESTOR_WORKING_PREFIX", "logs-working/")
+        processed_prefix = os.environ.get("ELB_INGESTOR_DONE_PREFIX", "logs-done/")
+        fetcher = elb_log_fetcher.S3LogFetcher(
+            bucket,
+            to_do=logs_to_be_processed,
+            done=logs_processed,
+            file_batch_size=file_batch_size,
+            unprocessed_prefix=unprocessed_prefix,
+            processing_prefix=processing_prefix,
+            processed_prefix=processed_prefix,
+        )
+    elif fetch_mode == "fixed_list":
+        work_dir = os.environ["ELB_INGESTOR_WORK_DIR"]
+        file_list_file = os.environ["ELB_INGESTOR_LIST_FILE"]
+        with open(file_list_file, "r") as f:
+            file_list = f.readlines()
+        fetcher = elb_log_fetcher.S3FixedLogFetcher(
+            bucket, 
+            to_do=logs_to_be_processed,
+            done=logs_processed,
+            file_batch_size=file_batch_size,
+            target_file_patterns=file_list,
+            lock_dir=work_dir
+        )
+    else:
+        raise Exception("No valid fetch mode found!")
 
     parser = elb_log_parse.LogParser(
         logs_to_be_processed, logs_processed, records, parser_stats
