@@ -166,6 +166,10 @@ class LogParser:
         """
         Parse log lines and push their messages to the queue
         """
+        if isinstance(name, Path):
+            name_string = name.name
+        else:
+            name_string = name
         for line in lines:
             line = line.strip()
             log_type = ALB
@@ -186,7 +190,7 @@ class LogParser:
             else:
                 match = format_elb_match(match)
             match = remove_empty_fields(match)
-            match = add_metadata(match, line, name)
+            match = add_metadata(match, line, name_string)
             if match is not None:
                 id_ = generate_id(match)
                 self.outbox.put((id_, match,))
