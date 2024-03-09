@@ -38,7 +38,7 @@ class ApiEndpoint(BaseHTTPRequestHandler):
         stats['queues']['shipper'] = dict(description='Records waiting to be sent to Elasticsearch', length=self.shipper.record_queue.qsize())
         stats['queues']['files'] = dict(description='Files waiting to be processed', length=self.fetcher.to_do.qsize())
         response = bytes(json.dumps(stats), 'utf-8')
-        
+
         self.send_response(200)
         self.send_header("Content-type", "application/json")
         self.send_header("Content-length", str(len(response)))

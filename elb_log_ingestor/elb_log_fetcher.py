@@ -5,6 +5,8 @@ import io
 import logging
 import pathlib
 import queue
+import time
+
 import boto3
 
 logger = logging.Logger(__name__)
@@ -191,7 +193,10 @@ class LocalLogFetcher:
         # push them to the queue && move them
         filenames = self.input_dir.glob("*.log")
         for filename in list(filenames)[:self.file_batch_size]:
-            processing_name = self.mark_log_processing(filename)
+            try:
+                processing_name = self.mark_log_processing(filename)
+            except:
+                continue
             contents = io.BytesIO()
             with open(processing_name, "r") as contents:
                 strings = [line for line in contents.readlines()]
@@ -202,7 +207,7 @@ class LocalLogFetcher:
         Move a logfile from the processing to the processed prefix.
         """
         processed_name = self.done_dir / logname.name
-        self.move_object(from_=logname, to=processed_name)
+        #self.move_object(from_=logname, to=processed_name)
         open(processed_name, "w").close() # truncate to save disk space
         return processed_name
 
@@ -232,4 +237,3 @@ def replace_prefix(logname: str, old_prefix: str, new_prefix: str) -> str:
     if not logname.startswith(old_prefix):
         raise ValueError
     return logname.replace(old_prefix, new_prefix, 1)
-

@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import logging
 import re
+import time
 import typing
 from pathlib import Path
 import queue
@@ -54,9 +55,45 @@ ALB_LOG_LINE_REGEX = re.compile(
         \ (?P<request_creation_time>[^ ]*)
         \ "(?P<actions_executed>[^"]*)"
         \ "(?P<redirect_url>[^"]*)
-        "(?P<lambda_error_reason>$|\ "[^ ]*")  # probably never used
+        "(?P<error_reason>$|\ "[^ ]*")  # probably never used
         (?P<new_field>.*)  # probably never used
         """,
+    re.VERBOSE,
+)
+ALB_LOG_LINE_REGEX_NEW = re.compile(
+    r'''
+          (?P<type>[^ ]*)
+        \ (?P<time>[^ ]*)  # leading backslash escapes the leading space
+        \ (?P<elb>[^ ]*)
+        \ (?P<client_ip>[^ ]*):(?P<client_port>[0-9]*)
+        \ (?P<target_ip>[^ ]*)[:-](?P<target_port>[0-9]*)
+        \ (?P<request_processing_time>[-.0-9]*)
+        \ (?P<target_processing_time>[-.0-9]*)
+        \ (?P<response_processing_time>[-.0-9]*)
+        \ (?P<elb_status_code>[-0-9]*)
+        \ (?P<target_status_code>[-0-9]*)
+        \ (?P<received_bytes>[-0-9]*)
+        \ (?P<sent_bytes>[-0-9]*)
+        \ "(?P<request_verb>[^ ]*)
+        \ (?P<request_url>[^ ]*)
+        \ (?P<request_proto>-|[^ ]*)\ ?"
+        \ "(?P<user_agent>[^"]*)"
+        \ (?P<ssl_cipher>[A-Z0-9-_]+)
+        \ (?P<ssl_protocol>[A-Za-z0-9.-]*)
+        \ (?P<target_group_arn>[^ ]*)
+        \ "(?P<trace_id>[^"]*)"
+        \ "(?P<domain_name>[^"]*)"
+        \ "(?P<chosen_cert_arn>[^"]*)"
+        \ (?P<matched_rule_priority>[-.0-9]*)
+        \ (?P<request_creation_time>[^ ]*)
+        \ "(?P<actions_executed>[^"]*)"
+        \ "(?P<redirect_url>[^"]*)"
+        \ "(?P<error_reason>[^"]*)"
+        \ "(?P<processing_targets_list>[^"]*)"
+        \ "(?P<target_status_code_list>[^"]*)"
+        \ "(?P<desync_mitigation_classification>[^"]*)"
+        \ "(?P<desync_mitigation_classification_reason>[^"]*)"
+        ''',
     re.VERBOSE,
 )
 
@@ -112,8 +149,12 @@ ALB_LOGS_FIELD_TYPES = {
     "request_creation_time": timestamp_to_timestamp,
     "actions_executed": str,
     "redirect_url": str,
-    "lambda_error_reason": str,
+    "error_reason": str,
     "new_field": str,
+    "processing_targets_list": str,
+    "target_status_code_list": str,
+    "desync_mitigation_classification": str,
+    "desync_mitigation_classification_reason": str,
 }
 
 ALB = "alb"
@@ -175,6 +216,8 @@ class LogParser:
             log_type = ALB
             match = ALB_LOG_LINE_REGEX.match(line)
             if match is None:
+                match = ALB_LOG_LINE_REGEX_NEW.match(line)
+            if match is None:
                 log_type = ELB
                 match = ELB_LOG_LINE_REGEX.match(line)
             if match is None:
@@ -192,7 +235,7 @@ class LogParser:
             match = remove_empty_fields(match)
             match = add_metadata(match, line, name_string)
             if match is not None:
-                id_ = generate_id(match)
+                id_ = generate_id(match, line)
                 self.outbox.put((id_, match,))
                 self.stats.increment_lines_processed()
             else:
@@ -282,7 +325,7 @@ def add_metadata(record: typing.Dict, line: str, filename: str) -> typing.Dict:
     filename: the name of the logfile the log was found in
     """
     extra_metadata = {
-        "@input": "s3",
+        "@input": "s3v2",
         "@shipper.name": "elb_log_ingestor",
         "@version": "1",
         "@raw": line,
@@ -324,24 +367,33 @@ def remove_empty_fields(d: typing.Dict) -> typing.Dict:
     return d
 
 
-def generate_id(entry: typing.Dict) -> str:
+def generate_id(entry: typing.Dict, line: str) -> str:
     """
     Generate a fairly unique key for a log entry
     """
-    if "@alb" in entry:
-        # ALBs already have one
-        key = entry["@alb"]["trace_id"]
-    else:
-        # for ELBs, take the elb id, client socket, timestamp, and size of the client request`
-        key = ":".join(
-            [
-                entry["@elb"]["elb"]["id"],
-                entry["@elb"]["client"]["ip"],
-                str(entry["@elb"]["client"]["port"]),
-                entry["@timestamp"],
-                str(entry["@elb"]["received_bytes"]),
-            ]
-        )
+    key = line
+    #if "@alb" in entry:
+    #    # ALBs already have one
+    #    key = ":".join(
+    #        [
+    #            entry["@alb"]["alb"]["id"],
+    #            entry["@alb"]["client"]["ip"],
+    #            str(entry["@alb"]["client"]["port"]),
+    #            entry["@timestamp"],
+    #            str(entry["@alb"]["received_bytes"]),
+    #        ]
+    #   )
+    #else:
+    #    # for ELBs, take the elb id, client socket, timestamp, and size of the client request`
+    #    key = ":".join(
+    #        [
+    #            entry["@elb"]["elb"]["id"],
+    #            entry["@elb"]["client"]["ip"],
+    #            str(entry["@elb"]["client"]["port"]),
+    #            entry["@timestamp"],
+    #            str(entry["@elb"]["received_bytes"]),
+    #        ]
+    #    )
     key = bytes(key, "utf-8")
 
     # take a shasum of the key, mostly so people don't try to attach meaning to it

@@ -19,6 +19,8 @@ def start_server():
     parser_stats = stats.ParserStats()
     shipper_stats = stats.ShipperStats()
 
+    shipper_count = int(os.environ.get("ELB_INGESTOR_SHIPPER_COUNT", "5"))
+
     elasticsearch_hosts = os.environ["ELB_INGESTOR_ELASTICSEARCH_HOSTS"]
     elasticsearch_hosts = elasticsearch_hosts.split(",")
     es_client = elasticsearch.Elasticsearch(
@@ -26,9 +28,9 @@ def start_server():
     )
     server_address = get_server_address()
 
-    logs_to_be_processed = queue.Queue()
+    logs_to_be_processed = queue.Queue(maxsize=10)
     logs_processed = queue.Queue()
-    records = queue.Queue()
+    records = queue.Queue(maxsize=100000)
     file_batch_size = int(os.environ.get("ELB_INGESTOR_FILE_BATCH_SIZE", 5))
     index_pattern = os.environ.get("ELB_INDEX_PATTERN", "logs-platform-%Y.%m.%d")
     fetch_mode = os.environ["ELB_INGESTOR_FETCH_MODE"]
@@ -66,26 +68,28 @@ def start_server():
         logs_to_be_processed, logs_processed, records, parser_stats
     )
     shipper = elasticsearch_shipper.ElasticsearchShipper(
-        #es_client, records, index_pattern, shipper_stats
-        None, records, index_pattern, shipper_stats
+        es_client, records, index_pattern, shipper_stats
     )
 
     # prepare the ApiEndpoint class for use
-    api_endpoint.ApiEndpoint.parser_stats = parser_stats 
+    api_endpoint.ApiEndpoint.parser_stats = parser_stats
     api_endpoint.ApiEndpoint.shipper_stats = shipper_stats
     api_endpoint.ApiEndpoint.fetcher = fetcher
     api_endpoint.ApiEndpoint.shipper = shipper
 
     server = http.server.HTTPServer(server_address, api_endpoint.ApiEndpoint)
 
-    fetcher_thread = threading.Thread(target=fetcher.run, daemon=True)
+    fetcher_thread = threading.Thread(target=fetcher.run, daemon=False)
     parser_thread = threading.Thread(target=parser.run, daemon=True)
-    shipper_thread = threading.Thread(target=shipper.run, daemon=True)
-    server_thread = threading.Thread(target=server.serve_forever)
+    shippers = []
+    for i in range(shipper_count):
+        shippers.append(threading.Thread(target=shipper.run, daemon=True))
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
 
     fetcher_thread.start()
     parser_thread.start()
-    shipper_thread.start()
+    for shipper in shippers:
+        shipper.start()
     server_thread.start()
 
 
