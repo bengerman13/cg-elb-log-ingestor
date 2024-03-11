@@ -42,8 +42,8 @@ ALB_LOG_LINE_REGEX = re.compile(
         \ (?P<received_bytes>[-0-9]*)
         \ (?P<sent_bytes>[-0-9]*)
         \ "(?P<request_verb>[^ ]*)
-        \ (?P<request_url>[^ ]*)
-        \ (?P<request_proto>-|[^ ]*)\ ?"
+        \ (?P<request_url>.*) # apparently URLs can include spaces
+        \  (?P<request_proto>-|[^ ]*)\ ?" # note the leading space here
         \ "(?P<user_agent>[^"]*)"
         \ (?P<ssl_cipher>[A-Z0-9-]+)
         \ (?P<ssl_protocol>[A-Za-z0-9.-]*)
@@ -75,8 +75,8 @@ ALB_LOG_LINE_REGEX_NEW = re.compile(
         \ (?P<received_bytes>[-0-9]*)
         \ (?P<sent_bytes>[-0-9]*)
         \ "(?P<request_verb>[^ ]*)
-        \ (?P<request_url>[^ ]*)
-        \ (?P<request_proto>-|[^ ]*)\ ?"
+        \ (?P<request_url>.*) # apparently URLs can include spaces
+        \  (?P<request_proto>-|[^ ]*)\ ?" # note the leading space here
         \ "(?P<user_agent>[^"]*)"
         \ (?P<ssl_cipher>[A-Z0-9-_]+)
         \ (?P<ssl_protocol>[A-Za-z0-9.-]*)
