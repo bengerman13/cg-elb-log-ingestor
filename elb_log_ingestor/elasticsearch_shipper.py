@@ -4,6 +4,7 @@ Sends messages to Elasticsearch
 import datetime
 import logging
 import queue
+import time
 import typing
 
 import elasticsearch
@@ -48,7 +49,7 @@ class ElasticsearchShipper:
         """
         index = self.figure_index(record)
         try:
-            self.es.create(index=index, id=id_, body=record, doc_type='doc')
+            self.es.create(index=index, id=id_, body=record, doc_type='_doc')
         except elasticsearch.ConflictError:
             self.stats.increment_duplicates_skipped()
             logger.info("Skipping duplicate document with id %s", id_)
@@ -57,6 +58,7 @@ class ElasticsearchShipper:
             self.stats.increment_documents_errored()
             logger.exception("Failed to index document")
             self.record_queue.put((id_, record))
+            time.sleep(0.1)
         else:
             self.stats.increment_documents_indexed()
             self.stats.document_time()
